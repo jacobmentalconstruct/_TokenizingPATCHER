@@ -317,7 +317,7 @@ def create_gui():
 
     debug_out = scrolledtext.ScrolledText(root, height=8, bg="#020617", fg="#e5e7eb", insertbackground="#e5e7eb", borderwidth=0, highlightthickness=1, highlightbackground="#1f2937")
     debug_out.pack(fill="both", expand=False, padx=10, pady=5)
-    status_lbl = tk.Label(root, text="Ready", fg="green", bg="#020617")
+    status.lbl = tk.Label(root, text="Ready (AI Online)", fg="green", bg="#020617")
     status_lbl.pack(pady=5)
 
     # ==============================
@@ -511,3 +511,4 @@ def create_gui():
 
 if __name__ == "__main__":
     create_gui()
+

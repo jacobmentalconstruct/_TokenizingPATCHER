@@ -1,13 +1,17 @@
 Project Root: C:\Users\jacob\Documents\Scripts\useful-helper-scripts\_TokenizingPATCHER
-Generated: 2025-11-17 15:52:21
+Generated: 2025-11-28 11:15:23
 Global Default Folder Exclusions: .git, .idea, .mypy_cache, .venv, .vscode, Debug, Release, __pycache__, _logs, bin, build, dist, logs, node_modules, obj, out, target
 Predefined Filename Exclusions: *.pyc, *.pyo, *.swo, *.swp, .DS_Store, Thumbs.db, package-lock.json, yarn.lock
 Dynamic Filename Exclusions: None
 
 [X] _TokenizingPATCHER/ (Project Root)
+  ├── [ ] .git/
   ├── [ ] _logs/
-  └── [X] src/
-      ├── [ ] _ontology/
-      ├── 📄 app - Copy.py
-      ├── 📄 app.py
-      └── 📄 patch_fixer.py
+  ├── [X] src/
+  │   ├── [ ] logs/
+  │   ├── 📄 app.py
+  │   ├── 📄 app_v1.0.py
+  │   ├── 📄 app_v2.0.py
+  │   └── 📄 index.html
+  ├── 📄 LICENSE.md
+  └── 📄 README.md

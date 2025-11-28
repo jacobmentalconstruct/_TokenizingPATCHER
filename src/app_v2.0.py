@@ -11,8 +11,9 @@ import re
 # ==============================
 # Global Config
 # ==============================
-OUTPUT_DIR = "./"
-LOG_DIR = "./logs/"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "./")
+LOG_DIR = os.path.join(SCRIPT_DIR, "./logs/")
 LOG_TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 DEFAULT_OUTPUT_FILENAME = "patched_output.txt"
 DEBUG_EXPANDED_BY_DEFAULT = True
@@ -20,7 +21,6 @@ DEBUG_EXPANDED_BY_DEFAULT = True
 
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Canonical JSON schema example for the Schema button
 PATCH_SCHEMA = """{
   "hunks": [
     {
@@ -33,13 +33,9 @@ PATCH_SCHEMA = """{
 
 
 class PatchError(Exception):
-    """User-facing error for patch application problems."""
     pass
 
 
-# ==========================================================
-# CHANGE 1: ADD THE NEW 'StructuredLine' CLASS
-# ==========================================================
 class StructuredLine:
     """
     Represents a line of text tokenized into its structural parts.
@@ -47,63 +43,38 @@ class StructuredLine:
     """
     def __init__(self, line: str):
         self.original_line = line
-        
-        # This regex is the core of the tokenizer.
-        # It splits the line into three groups:
-        # 1. (^[ \t]*)      = The indentation (leading tabs/spaces)
-        # 2. (.*?)           = The content (non-greedy)
-        # 3. ([ \t]*$)      = The trailing whitespace
         match = re.match(r"(^[ \t]*)(.*?)([ \t]*$)", line)
         if match:
             self.indent = match.group(1)
             self.content = match.group(2)
             self.trailing = match.group(3)
         else:
-            # Failsafe for very unusual lines
             self.indent = ""
             self.content = line
             self.trailing = ""
 
     def reconstruct(self) -> str:
-        """Rebuilds the line from its parts."""
         return f"{self.indent}{self.content}{self.trailing}"
 
     def __repr__(self):
         return f"[L: '{self.indent}' | '{self.content}' | '{self.trailing}']"
-# ==========================================================
 
 
 def detect_newline(text: str) -> str:
-    """Detect whether text uses CRLF or LF."""
     if "\r\n" in text:
         return "\r\n"
     return "\n"
 
 
 def split_lines_preserve(text: str, newline: str):
-    """
-    Split text into a list of lines on the *file's* newline,
-    preserving a trailing empty line if the text ends with a newline.
-    """
     if text == "":
         return [""]
     return text.split(newline)
 
 
-# ==========================================================
-# CHANGE 2: REPLACE 'normalize_line_for_floating' AND 'locate_hunk'
-# ==========================================================
-# (The old 'normalize_line_for_floating' function is deleted)
-
 def locate_hunk(file_lines: list[StructuredLine], 
                 search_lines: list[StructuredLine], 
                 floating: bool):
-    """
-    Return all start indices where search_lines matches file_lines.
-
-    Comparisons are made on the .content attribute ONLY.
-    If 'floating' is True, the .content is stripped before comparison.
-    """
     matches = []
     if not search_lines:
         return matches
@@ -117,8 +88,6 @@ def locate_hunk(file_lines: list[StructuredLine],
         ok = True
         for offset, s_line in enumerate(search_lines):
             f_line = file_lines[start + offset]
-            
-            # This is the new semantic comparison logic
             f_content = f_line.content
             s_content = s_line.content
             
@@ -133,11 +102,9 @@ def locate_hunk(file_lines: list[StructuredLine],
             matches.append(start)
 
     return matches
-# ==========================================================
 
 
 def check_overlaps(applications):
-    """Return True if any hunk application regions overlap."""
     if not applications:
         return False
 
@@ -148,20 +115,12 @@ def check_overlaps(applications):
     return False
 
 
-# ==========================================================
-# CHANGE 3: THE NEW 'apply_patch_text' FUNCTION
-# ==========================================================
 def apply_patch_text(file_text: str, patch_obj: dict, log_fn=None) -> str:
-    """
-    Apply a JSON hunk patch to file_text using structural line tokenization.
-    """
-
     def log(msg: str):
         if log_fn is not None:
             log_fn(msg)
 
     newline = detect_newline(file_text)
-    # 1. Tokenize the entire original file
     file_lines_str = split_lines_preserve(file_text, newline)
     file_lines = [StructuredLine(line) for line in file_lines_str]
 
@@ -182,14 +141,12 @@ def apply_patch_text(file_text: str, patch_obj: dict, log_fn=None) -> str:
         if not isinstance(search_block, str) or not isinstance(replace_block, str):
             raise PatchError(f"Hunk {num} is missing search_block or replace_block.")
 
-        # 2. Tokenize the patch blocks
         search_lines_str = re.split(r"\r\n|\n", search_block)
         search_lines = [StructuredLine(line) for line in search_lines_str]
         
         replace_lines_str = re.split(r"\r\n|\n", replace_block)
         replace_lines = [StructuredLine(line) for line in replace_lines_str]
 
-        # 3. Try strict (content-only) match
         strict_matches = locate_hunk(file_lines, search_lines, floating=False)
         if len(strict_matches) > 1:
             raise PatchError(f"Ambiguous strict match for hunk {num}.")
@@ -201,7 +158,6 @@ def apply_patch_text(file_text: str, patch_obj: dict, log_fn=None) -> str:
             start_end = (start, end)
             log(f"Strict match at lines {start + 1}–{end}")
         else:
-            # 4. Try floating (stripped-content) match
             float_matches = locate_hunk(file_lines, search_lines, floating=True)
             if len(float_matches) > 1:
                 raise PatchError(f"Ambiguous floating match for hunk {num}.")
@@ -220,43 +176,31 @@ def apply_patch_text(file_text: str, patch_obj: dict, log_fn=None) -> str:
     if check_overlaps(applications):
         raise PatchError("Overlapping hunks detected. Patch aborted.")
 
-    # 5. Apply bottom-up (THE "SMART APPLICATOR")
     for app in sorted(applications, key=lambda a: a["start"], reverse=True):
         start = app["start"]
         end = app["end"]
         replace_lines_tokenized = app["replace_lines"]
         
-        # Get the indentation to inherit for *newly added* lines
-        # We'll grab it from the first line of the block being replaced.
         indent_to_inherit = ""
         if start < len(file_lines):
             indent_to_inherit = file_lines[start].indent
 
         new_structured_lines = []
         for i, replace_line in enumerate(replace_lines_tokenized):
-            # Is this line replacing an *existing* line?
             if (start + i) < end:
-                # Yes: Preserve original line's formatting
                 original_line = file_lines[start + i]
                 original_line.content = replace_line.content
-                # (We could also copy replace_line.trailing, but 
-                #  preserving original's is safer)
                 new_structured_lines.append(original_line)
             else:
-                # No: This is a *new* line. Inherit indentation.
                 replace_line.indent = indent_to_inherit
                 new_structured_lines.append(replace_line)
         
-        # This list slice assignment handles add, remove, and replace all at once
         file_lines[start:end] = new_structured_lines
 
-    # 6. Reconstruct the file from the modified structured lines
     final_lines_str = [line.reconstruct() for line in file_lines]
     return newline.join(final_lines_str)
-# ==========================================================
 
 
-# Simple tooltip helper
 class Tooltip:
     def __init__(self, widget, text: str):
         self.widget = widget
@@ -295,7 +239,6 @@ def create_gui():
     root.title("Sturdy Patcher – Desktop Prototype")
     root.geometry("1000x750")
 
-    # Dark theme-ish
     root.configure(bg="#020617")
     root.option_add("*Background", "#020617")
     root.option_add("*Foreground", "#e5e7eb")
@@ -310,27 +253,29 @@ def create_gui():
     )
     header.pack(pady=10)
 
-    # ---------- Output filename row ----------
+    # ---------- Loaded file path row ----------
     filename_frame = tk.Frame(root, bg="#020617")
     filename_frame.pack(fill="x", padx=10, pady=5)
 
     tk.Label(
         filename_frame,
-        text="Output file name:",
+        text="Loaded file path:",
         bg="#020617",
         fg="#e5e7eb",
     ).pack(side="left")
-
-    output_name_var = tk.StringVar(value=DEFAULT_OUTPUT_FILENAME)
+    
+    output_name_var = tk.StringVar(value="")
     output_entry = tk.Entry(
         filename_frame,
         textvariable=output_name_var,
+        state="readonly",
         bg="#020617",
         fg="#e5e7eb",
         insertbackground="#e5e7eb",
+        readonlybackground="#020617",
     )
     output_entry.pack(side="left", padx=8, fill="x", expand=True)
-    Tooltip(output_entry, "Name for the patched output file (saved in OUTPUT_DIR).")
+    Tooltip(output_entry, "Full path of the loaded file (read-only).")
 
     # ---------- Toolbar ----------
     toolbar = tk.Frame(root, bg="#020617")
@@ -344,13 +289,44 @@ def create_gui():
     btn_save.pack(side="left", padx=5)
     Tooltip(btn_save, "Save patched file next to original using version fingerprint.")
 
+    # --- Versioning controls ---
+    version_enabled_var = tk.BooleanVar(value=False)
+    version_check = tk.Checkbutton(
+        toolbar,
+        text="Save as version",
+        variable=version_enabled_var,
+        bg="#020617",
+        fg="#e5e7eb",
+        selectcolor="#020617",
+    )
+    version_check.pack(side="left", padx=5)
+    Tooltip(version_check, "Enable saving with a version suffix (e.g., _v1.0).")
+    
+    version_suffix_var = tk.StringVar(value="")
+    version_entry = tk.Entry(
+        toolbar,
+        textvariable=version_suffix_var,
+        width=10,
+        bg="#020617",
+        fg="#e5e7eb",
+        insertbackground="#e5e7eb",
+        state="disabled",
+    )
+    version_entry.pack(side="left", padx=5)
+    Tooltip(version_entry, "Suffix to append to the file name, starting with '_' (e.g., _v1.0).")
+    
+    # Toggle logic for version entry
+    def _toggle_version_entry(*args):
+        if version_enabled_var.get():
+            version_entry.config(state="normal")
+        else:
+            version_entry.config(state="disabled")
+    
+    version_enabled_var.trace_add("write", _toggle_version_entry)
+
     btn_clear = tk.Button(toolbar, text="Clear All")
     btn_clear.pack(side="left", padx=5)
     Tooltip(btn_clear, "Clear all text areas.")
-
-    debug_toggle_btn = tk.Button(toolbar, text="Debug: ON")
-    debug_toggle_btn.pack(side="left", padx=5)
-    Tooltip(debug_toggle_btn, "Toggle debug logging.")
 
     # ---------- Main Paned Window ----------
     paned = tk.PanedWindow(
@@ -412,22 +388,43 @@ def create_gui():
     )
     patch_entry.pack(fill="both", expand=True)
     Tooltip(patch_entry, "Paste your patch JSON here.")
+    
+    # --- Placeholder Logic ---
+    placeholder_color = "#6b7280" # A dim gray
+    default_fg_color = "#e5e7eb"
+
+    def on_patch_focus_in(event):
+        if patch_entry.get("1.0", tk.END).strip() == PATCH_SCHEMA:
+            patch_entry.delete("1.0", tk.END)
+            patch_entry.config(fg=default_fg_color)
+
+    def on_patch_focus_out(event):
+        if not patch_entry.get("1.0", tk.END).strip():
+            patch_entry.insert("1.0", PATCH_SCHEMA)
+            patch_entry.config(fg=placeholder_color)
+            
+    patch_entry.insert("1.0", PATCH_SCHEMA)
+    patch_entry.config(fg=placeholder_color)
+    patch_entry.bind("<FocusIn>", on_patch_focus_in)
+    patch_entry.bind("<FocusOut>", on_patch_focus_out)
+    # --- End Placeholder Logic ---
+
     paned.add(right_frame)
 
     # ---------- Apply button ----------
     apply_frame = tk.Frame(root, bg="#020617")
-    apply_frame.pack(pady=10)
+    apply_frame.pack(pady=10, fill="x", padx=10)
 
     btn_apply = tk.Button(
         apply_frame,
-        text="Validate and Apply Patch",
+        text="Validate & Apply",
         font=("Helvetica", 12, "bold"),
         bg="#22c55e",
         fg="black",
         padx=20,
         pady=5,
     )
-    btn_apply.pack()
+    btn_apply.pack(side="right")
     Tooltip(btn_apply, "Validate the patch JSON and apply to the loaded file.")
 
     # ---------- Debug + Status ----------
@@ -480,6 +477,10 @@ def create_gui():
     debug_enabled = tk.BooleanVar(value=True)
     debug_collapsed = tk.BooleanVar(value=not DEBUG_EXPANDED_BY_DEFAULT)
 
+    # -------------------------------------------------------
+    # INTERNAL FUNCTIONS (All indented inside create_gui now)
+    # -------------------------------------------------------
+
     def log(msg: str):
         if not debug_enabled.get():
             return
@@ -491,22 +492,23 @@ def create_gui():
         prefix = "ERROR: " if is_error else ""
         log(prefix + msg)
 
-    # ---------- Command callbacks ----------
-
     def clear_all():
         file_preview.delete("1.0", tk.END)
         patch_entry.delete("1.0", tk.END)
         debug_output.delete("1.0", tk.END)
+        
+        # Reset the loaded file path and displayed path
+        output_name_var.set("")
+        # Use getattr/setattr on root to store state safely
+        root.loaded_filepath = None
+        
+        # Reset versioning controls
+        version_enabled_var.set(False)
+        version_suffix_var.set("")
+        
+        # Restore placeholder
+        on_patch_focus_out(None)
         set_status("Cleared", False)
-
-    def toggle_debug_mode():
-        if debug_enabled.get():
-            debug_enabled.set(False)
-            debug_toggle_btn.config(text="Debug: OFF")
-        else:
-            debug_enabled.set(True)
-            debug_toggle_btn.config(text="Debug: ON")
-            log("Debug mode enabled")
 
     def toggle_debug_panel():
         if debug_collapsed.get():
@@ -537,13 +539,41 @@ def create_gui():
             set_status(f"Failed to save debug log: {e}", True)
 
     def insert_schema():
-        current = patch_entry.get("1.0", tk.END)
-        if not current.strip():
-            patch_entry.insert("1.0", PATCH_SCHEMA)
-        else:
-            patch_entry.delete("1.0", tk.END)
-            patch_entry.insert("1.0", PATCH_SCHEMA)
-        set_status("Schema inserted into Patch JSON area")
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(PATCH_SCHEMA)
+            set_status("Schema copied to clipboard")
+        except Exception as e:
+            set_status(f"Failed to copy schema: {e}", True)
+
+    def _compute_default_version(path: str) -> str:
+        base = os.path.splitext(os.path.basename(path))[0]
+        dir_name = os.path.dirname(path) or "."
+        max_major, max_minor = None, None
+        
+        pattern = re.compile(re.escape(base) + r"_v(\d+)\.(\d+)")
+        
+        try:
+            for fn in os.listdir(dir_name):
+                stem, _ext = os.path.splitext(fn)
+                m = pattern.match(stem)
+                if m:
+                    major = int(m.group(1))
+                    minor = int(m.group(2))
+                    if (max_major is None) or (major > max_major) or (major == max_major and minor > max_minor):
+                        max_major, max_minor = major, minor
+        except Exception:
+            return "_v0.0"
+
+        if max_major is None:
+            return "_v0.0"
+        
+        major, minor = max_major, max_minor + 1
+        if minor >= 10:
+            major += 1
+            minor = 0
+        
+        return f"_v{major}.{minor}"
 
     def load_file():
         filepath = filedialog.askopenfilename()
@@ -553,15 +583,44 @@ def create_gui():
             with open(filepath, "r", encoding="utf-8") as f:
                 file_preview.delete("1.0", tk.END)
                 file_preview.insert(tk.END, f.read())
+            
+            root.loaded_filepath = filepath
+            output_name_var.set(filepath)
+
+            default_version = _compute_default_version(filepath)
+            version_suffix_var.set(default_version)
+            
+            version_enabled_var.set(True)
+        
             set_status(f"Loaded: {filepath}")
         except Exception as e:
             set_status(f"Failed to load file: {e}", True)
 
     def save_patched_file():
         text = file_preview.get("1.0", tk.END)
-        name = output_name_var.get().strip() or DEFAULT_OUTPUT_FILENAME
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        out_path = os.path.join(OUTPUT_DIR, name)
+        
+        out_path = None
+        original_path = getattr(root, "loaded_filepath", None)
+        
+        if original_path:
+            dir_name = os.path.dirname(original_path) or "."
+            base_name, ext = os.path.splitext(os.path.basename(original_path))
+            
+            if version_enabled_var.get():
+                suffix = version_suffix_var.get().strip()
+                if suffix and not suffix.startswith("_"):
+                    suffix = "_" + suffix
+                new_name = f"{base_name}{suffix}{ext}"
+            else:
+                new_name = f"{base_name}{ext}"
+            
+            out_path = os.path.join(dir_name, new_name)
+        
+        else:
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            name = output_name_var.get().strip() or DEFAULT_OUTPUT_FILENAME
+            out_path = os.path.join(OUTPUT_DIR, name)
+
         try:
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(text)
@@ -606,7 +665,6 @@ def create_gui():
 
     # ---------- Bind buttons / shortcuts ----------
     btn_clear.config(command=clear_all)
-    debug_toggle_btn.config(command=toggle_debug_mode)
     debug_toggle.config(command=toggle_debug_panel)
     save_log_btn.config(command=save_log_to_file)
     schema_btn.config(command=insert_schema)
@@ -626,9 +684,9 @@ def create_gui():
         debug_panel.forget()
         debug_toggle.config(text="▼")
 
+    # This loop is now correctly indented and will actually run!
     root.mainloop()
 
 
 if __name__ == "__main__":
     create_gui()
-

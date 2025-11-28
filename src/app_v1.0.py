@@ -11,8 +11,9 @@ import re
 # ==============================
 # Global Config
 # ==============================
-OUTPUT_DIR = "./"
-LOG_DIR = "./logs/"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "./")
+LOG_DIR = os.path.join(SCRIPT_DIR, "./logs/")
 LOG_TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 DEFAULT_OUTPUT_FILENAME = "patched_output.txt"
 DEBUG_EXPANDED_BY_DEFAULT = True
@@ -348,10 +349,6 @@ def create_gui():
     btn_clear.pack(side="left", padx=5)
     Tooltip(btn_clear, "Clear all text areas.")
 
-    debug_toggle_btn = tk.Button(toolbar, text="Debug: ON")
-    debug_toggle_btn.pack(side="left", padx=5)
-    Tooltip(debug_toggle_btn, "Toggle debug logging.")
-
     # ---------- Main Paned Window ----------
     paned = tk.PanedWindow(
         root,
@@ -412,22 +409,43 @@ def create_gui():
     )
     patch_entry.pack(fill="both", expand=True)
     Tooltip(patch_entry, "Paste your patch JSON here.")
+    
+    # --- Placeholder Logic ---
+    placeholder_color = "#6b7280" # A dim gray
+    default_fg_color = "#e5e7eb"
+    
+    def on_patch_focus_in(event):
+        if patch_entry.get("1.0", tk.END).strip() == PATCH_SCHEMA:
+            patch_entry.delete("1.0", tk.END)
+            patch_entry.config(fg=default_fg_color)
+    
+    def on_patch_focus_out(event):
+        if not patch_entry.get("1.0", tk.END).strip():
+            patch_entry.insert("1.0", PATCH_SCHEMA)
+            patch_entry.config(fg=placeholder_color)
+            
+            patch_entry.insert("1.0", PATCH_SCHEMA)
+            patch_entry.config(fg=placeholder_color)
+            patch_entry.bind("<FocusIn>", on_patch_focus_in)
+            patch_entry.bind("<FocusOut>", on_patch_focus_out)
+    # --- End Placeholder Logic ---
+    
     paned.add(right_frame)
 
     # ---------- Apply button ----------
     apply_frame = tk.Frame(root, bg="#020617")
-    apply_frame.pack(pady=10)
+    apply_frame.pack(pady=10, fill="x", padx=10)
 
     btn_apply = tk.Button(
         apply_frame,
-        text="Validate and Apply Patch",
+        text="Validate & Apply",
         font=("Helvetica", 12, "bold"),
         bg="#22c55e",
         fg="black",
         padx=20,
         pady=5,
     )
-    btn_apply.pack()
+    btn_apply.pack(side="right")
     Tooltip(btn_apply, "Validate the patch JSON and apply to the loaded file.")
 
     # ---------- Debug + Status ----------
@@ -497,16 +515,18 @@ def create_gui():
         file_preview.delete("1.0", tk.END)
         patch_entry.delete("1.0", tk.END)
         debug_output.delete("1.0", tk.END)
+        
+        # Restore placeholder
+        try:
+            on_patch_focus_out(None)
+        except Exception:
+        # Failsafe if function isn't defined for some reason
+            patch_entry.insert("1.0", PATCH_SCHEMA)
+            patch_entry.config(fg="#6b7280")
+        
         set_status("Cleared", False)
 
-    def toggle_debug_mode():
-        if debug_enabled.get():
-            debug_enabled.set(False)
-            debug_toggle_btn.config(text="Debug: OFF")
-        else:
-            debug_enabled.set(True)
-            debug_toggle_btn.config(text="Debug: ON")
-            log("Debug mode enabled")
+        # (toggle_debug_mode function removed)
 
     def toggle_debug_panel():
         if debug_collapsed.get():
@@ -537,13 +557,12 @@ def create_gui():
             set_status(f"Failed to save debug log: {e}", True)
 
     def insert_schema():
-        current = patch_entry.get("1.0", tk.END)
-        if not current.strip():
-            patch_entry.insert("1.0", PATCH_SCHEMA)
-        else:
-            patch_entry.delete("1.0", tk.END)
-            patch_entry.insert("1.0", PATCH_SCHEMA)
-        set_status("Schema inserted into Patch JSON area")
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(PATCH_SCHEMA)
+            set_status("Schema copied to clipboard")
+        except Exception as e:
+            set_status(f"Failed to copy schema: {e}", True)
 
     def load_file():
         filepath = filedialog.askopenfilename()
@@ -599,14 +618,13 @@ def create_gui():
             set_status(f"Unexpected patch error: {e}", True)
             return
 
-        file_preview.delete("1..0", tk.END)
+        file_preview.delete("1.0", tk.END)
         file_preview.insert(tk.END, patched)
         set_status("Patch Applied")
         log("--- PATCH COMPLETE ---")
 
     # ---------- Bind buttons / shortcuts ----------
     btn_clear.config(command=clear_all)
-    debug_toggle_btn.config(command=toggle_debug_mode)
     debug_toggle.config(command=toggle_debug_panel)
     save_log_btn.config(command=save_log_to_file)
     schema_btn.config(command=insert_schema)
@@ -631,3 +649,9 @@ def create_gui():
 
 if __name__ == "__main__":
     create_gui()
+
+
+
+
+
+
